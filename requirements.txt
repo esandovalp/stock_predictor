@@ -1,0 +1,29 @@
+# API and Data Collection
+requests==2.31.0
+python-dotenv==1.0.0
+backoff==2.2.1
+
+# Data Processing and ML
+pandas>=1.2.0
+numpy>=1.19.2
+scikit-learn>=0.24.0
+joblib>=1.0.0
+
+# Streaming and Message Queue
+kafka-python>=2.0.2
+pyspark==3.5.0  # Newer version
+findspark==2.0.1
+
+# Dashboard and Visualization
+streamlit>=0.85.0
+plotly>=4.14.3
+matplotlib==3.8.0  # Newer version
+
+# Utilities
+python-dateutil==2.8.2
+pytz>=2021.1
+
+# Testing (development only)
+pytest==7.3.1
+
+finnhub-python>=2.4.0

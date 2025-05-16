@@ -1,0 +1,174 @@
+version: '3'
+
+services:
+  # ZooKeeper - Required for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:latest
+    container_name: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - stock-net
+    healthcheck:
+      test: echo srvr | nc localhost 2181 || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    restart: unless-stopped
+
+  # Kafka - Message broker
+  kafka:
+    image: confluentinc/cp-kafka:latest
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+      KAFKA_LOG_RETENTION_HOURS: 24
+      KAFKA_DELETE_TOPIC_ENABLE: "true"
+    networks:
+      - stock-net
+    healthcheck:
+      test: kafka-topics --bootstrap-server localhost:9092 --list || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    restart: unless-stopped
+
+  # Data Collector Service
+  data-collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: data-collector
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-d0ik8mpr01qrfsagmplgd0ik8mpr01qrfsagmpm0}
+      - STOCK_SYMBOL=${STOCK_SYMBOL:-AAPL}
+      - PREDICTION_INTERVAL=${PREDICTION_INTERVAL:-60}
+      - KAFKA_BROKER=kafka:29092
+      - KAFKA_TOPIC=${KAFKA_TOPIC:-stock-data}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENV=${ENV:-production}
+    volumes:
+      - ./data:/app/data  # Direct host mapping
+      - ./app:/app/app  # Mount for development
+    networks:
+      - stock-net
+    command: python -m app.data_collector
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat /app/data/health_status.txt"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Model Trainer - Periodically retrains the ML model
+  model-trainer:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: model-trainer
+    depends_on:
+      data-collector:
+        condition: service_started
+    environment:
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-d0ik8mpr01qrfsagmplgd0ik8mpr01qrfsagmpm0}
+      - STOCK_SYMBOL=${STOCK_SYMBOL:-AAPL}
+      - MIN_TRAINING_SAMPLES=${MIN_TRAINING_SAMPLES:-30}
+      - MODEL_RETRAIN_PERIOD=${MODEL_RETRAIN_PERIOD:-120}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENV=${ENV:-production}
+    volumes:
+      - ./data:/app/data  # Direct host mapping
+      - ./app:/app/app  # Mount for development
+    networks:
+      - stock-net
+    # Run a script that periodically checks for new data and retrains
+    command: python -m app.ml_model
+    healthcheck:
+      test: ["CMD", "bash", "-c", "cat /app/data/health_status.txt"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+  # Dashboard - Streamlit web interface
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: dashboard
+    depends_on:
+      data-collector:
+        condition: service_started
+    ports:
+      - "${DASHBOARD_PORT:-8501}:8501"
+    environment:
+      - FINNHUB_API_KEY=${FINNHUB_API_KEY:-d0ik8mpr01qrfsagmplgd0ik8mpr01qrfsagmpm0}
+      - STOCK_SYMBOL=${STOCK_SYMBOL:-AAPL}
+      - UI_REFRESH_RATE=${UI_REFRESH_RATE:-5}
+      - DASHBOARD_THEME=${DASHBOARD_THEME:-light}
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ENV=${ENV:-production}
+      - STREAMLIT_SERVER_PORT=8501
+      - STREAMLIT_SERVER_ADDRESS=0.0.0.0
+      - PYTHONPATH=/app
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - MPLCONFIGDIR=/tmp/matplotlib
+    volumes:
+      - ./data:/app/data  # Direct host mapping
+      - ./app:/app/app  # Mount for development
+      - /tmp:/tmp  # Mount tmp directory for cache
+    user: root  # Temporarily run as root to fix permissions
+    networks:
+      - stock-net
+    command: >
+      sh -c "
+      mkdir -p /tmp/streamlit /tmp/matplotlib &&
+      chmod 777 /tmp/streamlit /tmp/matplotlib &&
+      streamlit run app/dashboard.py
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+# Volumes for data persistence
+volumes:
+  zookeeper-data:
+    driver: local
+  zookeeper-logs:
+    driver: local
+  kafka-data:
+    driver: local
+
+# Network configuration
+networks:
+  stock-net:
+    driver: bridge
