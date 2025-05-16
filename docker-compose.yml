@@ -77,11 +77,11 @@ services:
       - stock-net
     command: python -m app.data_collector
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat /app/data/health_status.txt"]
-      interval: 60s
+      test: ["CMD", "pgrep", "-f", "python -m app.data_collector"]
+      interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     restart: unless-stopped
 
   # Model Trainer - Periodically retrains the ML model
@@ -100,19 +100,19 @@ services:
       - MODEL_RETRAIN_PERIOD=${MODEL_RETRAIN_PERIOD:-120}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - ENV=${ENV:-production}
+      - PYTHONWARNINGS=ignore::FutureWarning
     volumes:
       - ./data:/app/data  # Direct host mapping
       - ./app:/app/app  # Mount for development
     networks:
       - stock-net
-    # Run a script that periodically checks for new data and retrains
     command: python -m app.ml_model
     healthcheck:
-      test: ["CMD", "bash", "-c", "cat /app/data/health_status.txt"]
-      interval: 60s
+      test: ["CMD", "pgrep", "-f", "python -m app.ml_model"]
+      interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
     restart: unless-stopped
 
   # Dashboard - Streamlit web interface
